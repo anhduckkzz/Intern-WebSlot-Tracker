@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Local data files
+known_companies.json
+session_cookies.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Chrome profile (if using local version)
+chrome_profile/
+
+# Playwright
+.playwright-mcp/
