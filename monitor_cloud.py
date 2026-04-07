@@ -250,4 +250,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Start the monitor in a background thread
+    import threading
+    monitor_thread = threading.Thread(target=main, daemon=True)
+    monitor_thread.start()
+
+    # Minimal Flask web server for Railway
+    try:
+        from flask import Flask
+    except ImportError:
+        import sys
+        print("[ERROR] Flask is required for Railway deployment. Please add it to requirements.txt.")
+        sys.exit(1)
+
+    app = Flask(__name__)
+
+    @app.route("/")
+    def index():
+        return "Internship Monitor is running!"
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
