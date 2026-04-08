@@ -1,7 +1,7 @@
 """
 Internship Monitor - Cloud Version
 Monitors https://internship.cse.hcmut.edu.vn for new companies
-Sends Telegram notification when new company detected
+Sends notifications via Telegram and/or Discord when new company detected
 
 Deploy to: Railway, Render, GitHub Actions, or any cloud platform
 """
@@ -24,6 +24,10 @@ CHECK_INTERVAL = 120
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 # Get from @userinfobot or @getmyid_bot
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# ============ DISCORD SETTINGS ============
+# Get from Discord Channel Settings → Integrations → Webhooks
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
 # ============ STORAGE ============
 # For cloud deployment, use environment variable or file
@@ -92,8 +96,7 @@ def fetch_company_details(company_id):
 def send_telegram_message(message):
     """Send message via Telegram bot"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[WARN] Telegram not configured")
-        print(message)
+        print("[WARN] Telegram not configured - skipping")
         return False
     
     try:
@@ -105,14 +108,34 @@ def send_telegram_message(message):
         }
         response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
+        print("[✓] Telegram notification sent")
         return True
     except Exception as e:
         print(f"[ERROR] Telegram send failed: {e}")
         return False
 
 
+def send_discord_webhook(embed_data):
+    """Send rich embed message via Discord webhook"""
+    if not DISCORD_WEBHOOK_URL:
+        print("[WARN] Discord webhook not configured - skipping")
+        return False
+    
+    try:
+        payload = {
+            "embeds": [embed_data]
+        }
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        print("[✓] Discord notification sent")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Discord webhook failed: {e}")
+        return False
+
+
 def notify_new_company(company):
-    """Send notification about new company"""
+    """Send notification about new company via Telegram and/or Discord"""
     company_name = company.get("fullname", "Unknown")
     short_name = company.get("shortname", "")
     company_id = company.get("_id", "")
@@ -130,12 +153,21 @@ def notify_new_company(company):
     
     # Check if has available slots
     has_slots = False
+    slots_remaining = 0
     if isinstance(max_register, int) and isinstance(current_register, int):
         has_slots = current_register < max_register
+        slots_remaining = max_register - current_register
     
     status_emoji = "✅" if has_slots else "⚠️"
     
-    message = f"""
+    # Console log
+    print(f"\n{'='*50}")
+    print(f"🆕 NEW COMPANY: {company_name}")
+    print(f"   Slots: {current_register}/{max_register}")
+    print(f"{'='*50}\n")
+    
+    # ============ TELEGRAM NOTIFICATION ============
+    telegram_message = f"""
 🔔 <b>CÔNG TY MỚI!</b> 🔔
 
 {status_emoji} <b>{company_name}</b>
@@ -150,14 +182,70 @@ def notify_new_company(company):
 ⏰ {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
 """
     
-    # Console log
-    print(f"\n{'='*50}")
-    print(f"🆕 NEW COMPANY: {company_name}")
-    print(f"   Slots: {current_register}/{max_register}")
-    print(f"{'='*50}\n")
+    # ============ DISCORD EMBED ============
+    # Determine embed color based on slot availability
+    if has_slots:
+        embed_color = 0x00FF00  # Green - has slots
+    elif current_register == 0 and max_register == "N/A":
+        embed_color = 0x3498DB  # Blue - unknown status
+    else:
+        embed_color = 0xFF9900  # Orange - full or warning
     
-    # Send Telegram
-    send_telegram_message(message)
+    discord_embed = {
+        "title": "🔔 CÔNG TY MỚI ĐĂNG KÝ!",
+        "description": f"**{company_name}**",
+        "color": embed_color,
+        "fields": [
+            {
+                "name": "📝 Tên viết tắt",
+                "value": short_name or "N/A",
+                "inline": True
+            },
+            {
+                "name": "📊 Trạng thái",
+                "value": f"{status_emoji} {'Còn chỗ' if has_slots else 'Cần kiểm tra'}",
+                "inline": True
+            },
+            {
+                "name": "👥 Slot đăng ký",
+                "value": f"{current_register}/{max_register}",
+                "inline": True
+            },
+            {
+                "name": "✅ Còn trống",
+                "value": f"{slots_remaining} slot" if has_slots else "N/A",
+                "inline": True
+            },
+            {
+                "name": "🎯 Nhận tối đa",
+                "value": f"{max_accept} SV",
+                "inline": True
+            },
+            {
+                "name": "🔗 Link đăng ký",
+                "value": f"[Vào website ngay!]({BASE_URL})",
+                "inline": False
+            }
+        ],
+        "footer": {
+            "text": "CSE HCMUT Internship Monitor"
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+        "thumbnail": {
+            "url": "https://www.hcmut.edu.vn/img/nhanDienThuongHieu/01_logobachkhoasang.png"
+        }
+    }
+    
+    # Send notifications
+    telegram_sent = send_telegram_message(telegram_message)
+    discord_sent = send_discord_webhook(discord_embed)
+    
+    # Log status
+    if not telegram_sent and not discord_sent:
+        print("[WARN] No notification service configured!")
+        print(f"   Configure TELEGRAM_BOT_TOKEN or DISCORD_WEBHOOK_URL")
+    
+    return telegram_sent or discord_sent
 
 
 def check_for_new_companies():
@@ -194,7 +282,7 @@ def check_for_new_companies():
 
 
 def send_startup_message():
-    """Send startup notification"""
+    """Send startup notification to all configured channels"""
     companies = fetch_companies()
     count = len(companies) if companies else 0
     
@@ -210,7 +298,8 @@ def send_startup_message():
                     if current_reg < max_reg:
                         available += 1
     
-    message = f"""
+    # Telegram message
+    telegram_message = f"""
 🟢 <b>Monitor Started!</b>
 
 📊 Tổng công ty: {count}
@@ -219,7 +308,44 @@ def send_startup_message():
 
 Bot đang chạy và sẽ thông báo khi có công ty mới!
 """
-    send_telegram_message(message)
+    
+    # Discord embed
+    discord_embed = {
+        "title": "🟢 Monitor Started!",
+        "description": "Bot đang hoạt động và sẽ thông báo khi có công ty mới",
+        "color": 0x00FF00,  # Green
+        "fields": [
+            {
+                "name": "📊 Tổng công ty",
+                "value": str(count),
+                "inline": True
+            },
+            {
+                "name": "✅ Còn slot",
+                "value": str(available),
+                "inline": True
+            },
+            {
+                "name": "⏱️ Check interval",
+                "value": f"{CHECK_INTERVAL}s ({CHECK_INTERVAL // 60} phút)",
+                "inline": True
+            }
+        ],
+        "footer": {
+            "text": "CSE HCMUT Internship Monitor"
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Send to both channels
+    telegram_sent = send_telegram_message(telegram_message)
+    discord_sent = send_discord_webhook(discord_embed)
+    
+    # Log configured channels
+    print("\n📡 Notification channels:")
+    print(f"   Telegram: {'✓ Configured' if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else '✗ Not configured'}")
+    print(f"   Discord:  {'✓ Configured' if DISCORD_WEBHOOK_URL else '✗ Not configured'}")
+    print()
 
 
 def main():
@@ -229,7 +355,8 @@ def main():
     print("="*50)
     print(f"Website: {BASE_URL}")
     print(f"Check interval: {CHECK_INTERVAL}s")
-    print(f"Telegram: {'Configured' if TELEGRAM_BOT_TOKEN else 'NOT SET'}")
+    print(f"Telegram: {'✓ Configured' if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else '✗ Not configured'}")
+    print(f"Discord:  {'✓ Configured' if DISCORD_WEBHOOK_URL else '✗ Not configured'}")
     print("="*50)
     
     # Send startup message
@@ -250,4 +377,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Start the monitor in a background thread
+    import threading
+    monitor_thread = threading.Thread(target=main, daemon=True)
+    monitor_thread.start()
+
+    # Minimal Flask web server for Railway
+    try:
+        from flask import Flask
+    except ImportError:
+        import sys
+        print("[ERROR] Flask is required for Railway deployment. Please add it to requirements.txt.")
+        sys.exit(1)
+
+    app = Flask(__name__)
+
+    @app.route("/")
+    def index():
+        return "Internship Monitor is running!"
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
